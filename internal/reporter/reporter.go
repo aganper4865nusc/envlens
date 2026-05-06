@@ -6,21 +6,21 @@ import (
 	"io"
 	"sort"
 
-	"github.com/user/envlens/internal/auditor"
-	"github.com/user/envlens/internal/differ"
-	"github.com/user/envlens/internal/linter"
-	"github.com/user/envlens/internal/validator"
+	"github.com/yourorg/envlens/internal/auditor"
+	"github.com/yourorg/envlens/internal/differ"
+	"github.com/yourorg/envlens/internal/resolver"
+	"github.com/yourorg/envlens/internal/validator"
 )
 
-// Report holds all results to be reported.
+// Report bundles all analysis results.
 type Report struct {
-	Diffs      []differ.DiffEntry
-	Validation []validator.Issue
-	Audit      []auditor.Issue
-	Lint       []linter.Issue
+	Diffs       []differ.Entry
+	Validations []validator.Issue
+	Audits      []auditor.Finding
+	Resolutions []resolver.Resolution
 }
 
-// Write outputs the report to w in the given format ("text" or "json").
+// Write serialises the report to w in the requested format ("text" or "json").
 func Write(w io.Writer, r Report, format string) error {
 	switch format {
 	case "json":
@@ -31,30 +31,24 @@ func Write(w io.Writer, r Report, format string) error {
 }
 
 func writeText(w io.Writer, r Report) error {
-	if len(r.Diffs) == 0 && len(r.Validation) == 0 && len(r.Audit) == 0 && len(r.Lint) == 0 {
+	if len(r.Diffs) == 0 && len(r.Validations) == 0 && len(r.Audits) == 0 {
 		_, err := fmt.Fprintln(w, "No issues found.")
 		return err
 	}
 	for _, d := range r.Diffs {
-		_, err := fmt.Fprintf(w, "[diff] %s %s\n", d.Type, d.Key)
+		_, err := fmt.Fprintf(w, "[diff] %s %s\n", d.Key, d.Status)
 		if err != nil {
 			return err
 		}
 	}
-	for _, v := range r.Validation {
+	for _, v := range r.Validations {
 		_, err := fmt.Fprintf(w, "[validation] %s: %s\n", v.Key, v.Message)
 		if err != nil {
 			return err
 		}
 	}
-	for _, a := range r.Audit {
+	for _, a := range r.Audits {
 		_, err := fmt.Fprintf(w, "[audit] %s: %s\n", a.Key, a.Message)
-		if err != nil {
-			return err
-		}
-	}
-	for _, l := range r.Lint {
-		_, err := fmt.Fprintf(w, "[lint/%s] %s: %s\n", l.Severity, l.Key, l.Message)
 		if err != nil {
 			return err
 		}
@@ -62,56 +56,64 @@ func writeText(w io.Writer, r Report) error {
 	return nil
 }
 
+type jsonReport struct {
+	Diffs       []marshalledDiff       `json:"diffs"`
+	Validations []marshalledValidation `json:"validations"`
+	Audits      []marshalledAudit      `json:"audits"`
+	Resolutions []marshalledResolution `json:"resolutions,omitempty"`
+}
+
+type marshalledDiff struct {
+	Key    string `json:"key"`
+	Status string `json:"status"`
+}
+
+type marshalledValidation struct {
+	Key     string `json:"key"`
+	Message string `json:"message"`
+}
+
+type marshalledAudit struct {
+	Key     string `json:"key"`
+	Message string `json:"message"`
+}
+
+type marshalledResolution struct {
+	Key      string `json:"key"`
+	Source   string `json:"source"`
+	Override bool   `json:"override,omitempty"`
+}
+
 func writeJSON(w io.Writer, r Report) error {
-	type jsonReport struct {
-		Diffs      interface{} `json:"diffs"`
-		Validation interface{} `json:"validation"`
-		Audit      interface{} `json:"audit"`
-		Lint       interface{} `json:"lint"`
+	out := jsonReport{}
+
+	sort.Slice(r.Diffs, func(i, j int) bool { return r.Diffs[i].Key < r.Diffs[j].Key })
+	for _, d := range r.Diffs {
+		out.Diffs = append(out.Diffs, marshalledDiff{Key: d.Key, Status: string(d.Status)})
+	}
+	for _, v := range r.Validations {
+		out.Validations = append(out.Validations, marshalledValidation{Key: v.Key, Message: v.Message})
+	}
+	for _, a := range r.Audits {
+		out.Audits = append(out.Audits, marshalledAudit{Key: a.Key, Message: a.Message})
+	}
+	for _, res := range r.Resolutions {
+		out.Resolutions = append(out.Resolutions, marshalledResolution{
+			Key:      res.Key,
+			Source:   res.Source,
+			Override: res.Override,
+		})
 	}
 
-	diffs := marshalDiff(r.Diffs)
-	validation := marshalValidation(r.Validation)
-	audit := marshalAudit(r.Audit)
-	lint := marshalLint(r.Lint)
-
-	out := jsonReport{Diffs: diffs, Validation: validation, Audit: audit, Lint: lint}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
-func marshalDiff(entries []differ.DiffEntry) []map[string]string {
-	result := make([]map[string]string, 0, len(entries))
-	for _, e := range entries {
-		result = append(result, map[string]string{"type": string(e.Type), "key": e.Key, "base": e.BaseValue, "target": e.TargetValue})
-	}
-	return result
+func marshalDiff(d differ.Entry) marshalledDiff       { return marshalledDiff{Key: d.Key, Status: string(d.Status)} }
+func marshalValidation(v validator.Issue) marshalledValidation {
+	return marshalledValidation{Key: v.Key, Message: v.Message}
 }
-
-func marshalValidation(issues []validator.Issue) []map[string]string {
-	result := make([]map[string]string, 0, len(issues))
-	for _, i := range issues {
-		result = append(result, map[string]string{"key": i.Key, "message": i.Message})
-	}
-	return result
-}
-
-func marshalAudit(issues []auditor.Issue) []map[string]string {
-	result := make([]map[string]string, 0, len(issues))
-	for _, i := range issues {
-		result = append(result, map[string]string{"key": i.Key, "message": i.Message})
-	}
-	return result
-}
-
-func marshalLint(issues []linter.Issue) []map[string]string {
-	sorted := make([]linter.Issue, len(issues))
-	copy(sorted, issues)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
-	result := make([]map[string]string, 0, len(sorted))
-	for _, i := range sorted {
-		result = append(result, map[string]string{"key": i.Key, "message": i.Message, "severity": i.Severity})
-	}
-	return result
+func marshalAuditFinding(a auditor.Finding) marshalledAudit {
+	return marshalledAudit{Key: a.Key, Message: a.Message}
 }

@@ -9,63 +9,67 @@ import (
 	"github.com/yourorg/envlens/internal/differ"
 	"github.com/yourorg/envlens/internal/parser"
 	"github.com/yourorg/envlens/internal/reporter"
+	"github.com/yourorg/envlens/internal/resolver"
 	"github.com/yourorg/envlens/internal/validator"
 )
 
 func main() {
 	var (
-		baseFile   = flag.String("base", "", "Base env file (e.g. .env.staging)")
-		targetFile = flag.String("target", "", "Target env file (e.g. .env.production)")
-		rulesFile  = flag.String("rules", "", "Optional validation rules JSON file")
-		format     = flag.String("format", "text", "Output format: text or json")
-		auditOnly  = flag.Bool("audit", false	, "Run audit only on target file")
+		source        = flag.String("source", "", "source .env file (baseline)")
+		target        = flag.String("target", "", "target .env file to compare/audit")
+		format        = flag.String("format", "text", "output format: text|json")
+		auditOnly     = flag.Bool("audit-only", false, "skip diff, only audit target")
+		allowEnvOverride = flag.Bool("env-override", false, "let OS env vars override file values")
 	)
 	flag.Parse()
 
-	if *targetFile == "" {
+	if *target == "" {
 		fmt.Fprintln(os.Stderr, "error: --target is required")
-		flag.Usage()
 		os.Exit(1)
 	}
 
-	targetEnv, err := parser.ParseFile(*targetFile)
+	targetEnv, err := parser.ParseFile(*target)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing target file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error parsing target: %v\n", err)
 		os.Exit(1)
 	}
 
-	var diffs []differ.DiffEntry
-	if *baseFile != "" {
-		baseEnv, err := parser.ParseFile(*baseFile)
+	// Resolve target env with optional OS override.
+	resolutions, _ := resolver.Resolve(targetEnv, resolver.Options{
+		AllowEnvOverride: *allowEnvOverride,
+	})
+	resolvedEnv := resolver.ToMap(resolutions)
+
+	var diffs []differ.Entry
+	var valIssues []validator.Issue
+
+	if !*auditOnly && *source != "" {
+		sourceEnv, err := parser.ParseFile(*source)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error parsing base file: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error parsing source: %v\n", err)
 			os.Exit(1)
 		}
-		diffs = differ.Diff(baseEnv, targetEnv)
-	}
+		diffs = differ.Diff(sourceEnv, resolvedEnv)
 
-	var validationIssues []validator.Issue
-	if *rulesFile != "" {
-		rules, err := validator.LoadRules(*rulesFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error loading rules: %v\n", err)
-			os.Exit(1)
+		// Validate that all source keys exist in target.
+		required := make([]string, 0, len(sourceEnv))
+		for k := range sourceEnv {
+			required = append(required, k)
 		}
-		validationIssues = validator.Validate(targetEnv, rules)
+		valIssues = validator.Validate(resolvedEnv, validator.Rules{Required: required})
 	}
 
-	var auditIssues []auditor.Issue
-	if *auditOnly || *baseFile == "" {
-		auditIssues = auditor.Audit(targetEnv)
+	findings := auditor.Audit(resolvedEnv)
+
+	rep := reporter.Report{
+		Diffs:       diffs,
+		Validations: valIssues,
+		Audits:      findings,
+		Resolutions: resolutions,
 	}
 
-	err = reporter.Write(os.Stdout, *format, diffs, validationIssues, auditIssues)
-	if err != nil {
+	if err := reporter.Write(os.Stdout, rep, *format); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing report: %v\n", err)
 		os.Exit(1)
-	}
-
-	if len(validationIssues) > 0 {
-		os.Exit(2)
 	}
 }

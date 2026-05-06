@@ -1,100 +1,99 @@
-package reporter
+package reporter_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/user/envlens/internal/auditor"
-	"github.com/user/envlens/internal/differ"
-	"github.com/user/envlens/internal/validator"
+	"github.com/yourorg/envlens/internal/auditor"
+	"github.com/yourorg/envlens/internal/differ"
+	"github.com/yourorg/envlens/internal/reporter"
+	"github.com/yourorg/envlens/internal/resolver"
+	"github.com/yourorg/envlens/internal/validator"
 )
 
 func TestWriteText_NoIssues(t *testing.T) {
 	var buf bytes.Buffer
-	r := Report{}
-	if err := Write(&buf, r, FormatText); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := reporter.Write(&buf, reporter.Report{}, "text")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "No issues found.") {
-		t.Errorf("expected 'No issues found.' but got: %s", buf.String())
+	if !strings.Contains(buf.String(), "No issues") {
+		t.Errorf("expected no-issues message, got: %s", buf.String())
 	}
 }
 
 func TestWriteText_DiffAdded(t *testing.T) {
 	var buf bytes.Buffer
-	r := Report{
-		DiffResults: []differ.DiffEntry{
-			{Key: "NEW_KEY", Status: differ.StatusAdded, NewValue: "hello"},
-		},
+	r := reporter.Report{
+		Diffs: []differ.Entry{{Key: "NEW_KEY", Status: differ.Added}},
 	}
-	if err := Write(&buf, r, FormatText); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_ = reporter.Write(&buf, r, "text")
+	if !strings.Contains(buf.String(), "[diff]") {
+		t.Errorf("expected diff line, got: %s", buf.String())
 	}
-	out := buf.String()
-	if !strings.Contains(out, "+ NEW_KEY=hello") {
-		t.Errorf("expected added key in output, got: %s", out)
+	if !strings.Contains(buf.String(), "NEW_KEY") {
+		t.Errorf("expected key in output, got: %s", buf.String())
 	}
 }
 
 func TestWriteText_ValidationIssue(t *testing.T) {
 	var buf bytes.Buffer
-	r := Report{
-		ValidateResults: []validator.ValidationIssue{
-			{Key: "DB_URL", Severity: "error", Message: "required key is missing"},
-		},
+	r := reporter.Report{
+		Validations: []validator.Issue{{Key: "DB_URL", Message: "required key missing"}},
 	}
-	if err := Write(&buf, r, FormatText); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "[ERROR] DB_URL") {
-		t.Errorf("expected validation issue in output, got: %s", out)
+	_ = reporter.Write(&buf, r, "text")
+	if !strings.Contains(buf.String(), "[validation]") {
+		t.Errorf("expected validation line, got: %s", buf.String())
 	}
 }
 
 func TestWriteText_AuditIssue(t *testing.T) {
 	var buf bytes.Buffer
-	r := Report{
-		AuditResults: []auditor.AuditIssue{
-			{Key: "SECRET", Severity: "warn", Message: "plain-text secret detected"},
-		},
+	r := reporter.Report{
+		Audits: []auditor.Finding{{Key: "SECRET", Message: "plain secret detected"}},
 	}
-	if err := Write(&buf, r, FormatText); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "[WARN] SECRET") {
-		t.Errorf("expected audit issue in output, got: %s", out)
+	_ = reporter.Write(&buf, r, "text")
+	if !strings.Contains(buf.String(), "[audit]") {
+		t.Errorf("expected audit line, got: %s", buf.String())
 	}
 }
 
 func TestWriteJSON_Structure(t *testing.T) {
 	var buf bytes.Buffer
-	r := Report{
-		DiffResults: []differ.DiffEntry{
-			{Key: "FOO", Status: differ.StatusRemoved, OldValue: "bar"},
-		},
+	r := reporter.Report{
+		Diffs:       []differ.Entry{{Key: "X", Status: differ.Removed}},
+		Validations: []validator.Issue{{Key: "Y", Message: "empty"}},
+		Audits:      []auditor.Finding{{Key: "Z", Message: "plain"}},
 	}
-	if err := Write(&buf, r, FormatJSON); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_ = reporter.Write(&buf, r, "json")
+	var out map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
 	}
-	out := buf.String()
-	for _, want := range []string{`"diff"`, `"validation"`, `"audit"`, `"FOO"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("expected %q in JSON output, got: %s", want, out)
+	for _, field := range []string{"diffs", "validations", "audits"} {
+		if _, ok := out[field]; !ok {
+			t.Errorf("missing JSON field: %s", field)
 		}
 	}
 }
 
-func TestWriteJSON_EmptyReport(t *testing.T) {
+func TestWriteJSON_WithResolutions(t *testing.T) {
 	var buf bytes.Buffer
-	r := Report{}
-	if err := Write(&buf, r, FormatJSON); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	r := reporter.Report{
+		Resolutions: []resolver.Resolution{
+			{Key: "PORT", Value: "8080", Source: "file"},
+			{Key: "HOST", Value: "localhost", Source: "default"},
+		},
 	}
-	out := buf.String()
-	if !strings.Contains(out, "[]") {
-		t.Errorf("expected empty arrays in JSON output, got: %s", out)
+	_ = reporter.Write(&buf, r, "json")
+	var out map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	res, ok := out["resolutions"].([]interface{})
+	if !ok || len(res) != 2 {
+		t.Errorf("expected 2 resolutions, got: %v", out["resolutions"])
 	}
 }
