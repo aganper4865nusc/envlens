@@ -56,6 +56,17 @@ Example output:
 | `--stages` | Comma-separated list of env files to audit |
 | `--quiet` | Suppress output, exit code only |
 | `--json` | Output results as JSON |
+| `--ignore` | Comma-separated list of keys to exclude from diff/audit |
+
+---
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | No issues found |
+| `1` | Issues detected (missing, extra, or mismatched keys) |
+| `2` | Invalid arguments or file not found |
 
 ---
 
