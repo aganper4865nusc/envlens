@@ -87,3 +87,16 @@ func TestTransform_ChangeRecordsOldKey(t *testing.T) {
 		t.Errorf("expected Key=DB_PASS, got %s", c.Key)
 	}
 }
+
+func TestTransform_AddPrefixAndUppercaseKeys(t *testing.T) {
+	// Verify that combining AddPrefix and UppercaseKeys applies both transformations.
+	src := map[string]string{"db_host": "localhost"}
+	res := transformer.Transform(src, transformer.Options{AddPrefix: "APP_", UppercaseKeys: true})
+
+	if _, ok := res.Env["APP_DB_HOST"]; !ok {
+		t.Errorf("expected APP_DB_HOST key, got Env=%v", res.Env)
+	}
+	if res.Env["APP_DB_HOST"] != "localhost" {
+		t.Errorf("expected value localhost, got %s", res.Env["APP_DB_HOST"])
+	}
+}
