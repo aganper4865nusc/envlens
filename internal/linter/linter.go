@@ -87,3 +87,13 @@ func Lint(env map[string]string) []Issue {
 	}
 	return issues
 }
+
+// HasErrors returns true if any of the provided issues have severity "error".
+func HasErrors(issues []Issue) bool {
+	for _, issue := range issues {
+		if issue.Severity == "error" {
+			return true
+		}
+	}
+	return false
+}
