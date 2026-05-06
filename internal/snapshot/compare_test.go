@@ -64,3 +64,22 @@ func TestCompare_EmptySnapshots(t *testing.T) {
 		t.Error("expected no changes for empty snapshots")
 	}
 }
+
+func TestCompare_MultipleChanges(t *testing.T) {
+	old := makeSnap("old", map[string]string{"A": "1", "B": "2", "C": "3"})
+	new := makeSnap("new", map[string]string{"A": "1", "B": "99", "D": "4"})
+	d := snapshot.Compare(old, new)
+
+	if _, ok := d.Removed["C"]; !ok {
+		t.Error("expected C to be in Removed")
+	}
+	if _, ok := d.Added["D"]; !ok {
+		t.Error("expected D to be in Added")
+	}
+	if pair, ok := d.Changed["B"]; !ok || pair[0] != "2" || pair[1] != "99" {
+		t.Errorf("expected B changed from 2 to 99, got %v", d.Changed["B"])
+	}
+	if _, ok := d.Unchanged["A"]; !ok {
+		t.Error("expected A to be in Unchanged")
+	}
+}
