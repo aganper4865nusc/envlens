@@ -69,6 +69,17 @@ func TestMask_CustomMaskChar(t *testing.T) {
 	}
 }
 
+func TestMask_OutputLengthMatchesInput(t *testing.T) {
+	opts := masker.DefaultOptions()
+	values := []string{"a", "ab", "abcdefgh", "supersecrettoken123"}
+	for _, v := range values {
+		got := masker.Mask(v, opts)
+		if len(got) != len(v) {
+			t.Errorf("Mask(%q): output length %d does not match input length %d", v, len(got), len(v))
+		}
+	}
+}
+
 func TestMaskMap_OnlySensitiveKeysMasked(t *testing.T) {
 	env := map[string]string{
 		"APP_NAME":    "myapp",
