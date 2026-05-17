@@ -80,3 +80,23 @@ func TestTrim_NoOptions_ReturnsFullCopy(t *testing.T) {
 		t.Errorf("expected 0 removed, got %d", len(res.Removed))
 	}
 }
+
+func TestTrim_RemoveEmptyAndExplicitKeys_Combined(t *testing.T) {
+	env := makeEnv("A", "", "B", "keep", "C", "drop")
+	res := trimmer.Trim(env, trimmer.Options{
+		RemoveEmpty: true,
+		RemoveKeys:  []string{"C"},
+	})
+	if _, ok := res.Env["A"]; ok {
+		t.Error("expected A to be removed (empty value)")
+	}
+	if _, ok := res.Env["C"]; ok {
+		t.Error("expected C to be removed (explicit key)")
+	}
+	if res.Env["B"] != "keep" {
+		t.Error("expected B to be retained")
+	}
+	if len(res.Removed) != 2 {
+		t.Errorf("expected 2 removed, got %d", len(res.Removed))
+	}
+}
