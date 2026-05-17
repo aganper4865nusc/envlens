@@ -85,3 +85,21 @@ func TestFromMap_NoFalseDuplicates(t *testing.T) {
 		t.Errorf("unexpected value for KEY: %q", r.Env["KEY"])
 	}
 }
+
+// TestDedupe_SingleEntry verifies that a single entry produces no duplicates
+// and is correctly stored in the result env map.
+func TestDedupe_SingleEntry(t *testing.T) {
+	entries := []deduper.Entry{
+		{Key: "ONLY", Value: "one"},
+	}
+	r := deduper.Dedupe(entries)
+	if len(r.Duplicates) != 0 {
+		t.Errorf("expected no duplicates for single entry, got %v", r.Duplicates)
+	}
+	if r.Env["ONLY"] != "one" {
+		t.Errorf("expected 'one', got %q", r.Env["ONLY"])
+	}
+	if len(r.Env) != 1 {
+		t.Errorf("expected env length 1, got %d", len(r.Env))
+	}
+}
